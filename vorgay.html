@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Віковий сканер для телефону</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body {
+            background: linear-gradient(135deg, #0f2027, #203a43);
+            font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+            padding: 15px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .card {
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(10px);
+            border-radius: 32px;
+            padding: 20px;
+            max-width: 500px;
+            width: 100%;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+        h1 {
+            text-align: center;
+            color: white;
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+        }
+        .camera-placeholder {
+            background: #1a1a2e;
+            border-radius: 24px;
+            aspect-ratio: 4/3;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            margin-bottom: 15px;
+            border: 2px dashed #4CAF50;
+        }
+        .camera-placeholder span {
+            font-size: 4rem;
+        }
+        video {
+            width: 100%;
+            border-radius: 24px;
+            display: none;
+            transform: scaleX(-1);
+        }
+        .result {
+            background: linear-gradient(135deg, #1e3c72, #2a5298);
+            border-radius: 20px;
+            padding: 15px;
+            text-align: center;
+            margin: 15px 0;
+        }
+        .age {
+            font-size: 3rem;
+            font-weight: bold;
+            color: #ffd700;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 16px;
+            font-size: 1.2rem;
+            border-radius: 50px;
+            width: 100%;
+            margin: 8px 0;
+            cursor: pointer;
+            font-weight: bold;
+            transition: 0.2s;
+        }
+        button:active {
+            transform: scale(0.97);
+        }
+        .btn-stop {
+            background: #f44336;
+        }
+        button:disabled {
+            background: #666;
+            opacity: 0.6;
+        }
+        .status {
+            background: rgba(0,0,0,0.5);
+            border-radius: 15px;
+            padding: 10px;
+            text-align: center;
+            color: white;
+            font-size: 0.9rem;
+            margin: 10px 0;
+        }
+        .info {
+            color: #a8dadc;
+            font-size: 0.75rem;
+            text-align: center;
+            margin-top: 15px;
+        }
+        @media (max-width: 500px) {
+            .age { font-size: 2.5rem; }
+            button { padding: 14px; }
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+</head>
+<body>
+<div class="card">
+    <h1>📸 Віковий сканер</h1>
+    
+    <div id="placeholder" class="camera-placeholder">
+        <span>📷</span>
+        <p style="color:white; margin-top:10px;">Камера вимкнена</p>
+    </div>
+    
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display:none;"></canvas>
+    
+    <div class="result" id="resultPanel" style="display:none;">
+        <div class="age"><span id="ageValue">--</span> <span style="font-size:1rem;">років</span></div>
+        <div>🎯 прогнозований вік</div>
+    </div>
+    
+    <div class="status" id="status">⚪ Натисніть кнопку нижче</div>
+    
+    <button id="startBtn">🎥 УВІМКНУТИ КАМЕРУ</button>
+    <button id="stopBtn" class="btn-stop" disabled>⏹️ ВИМКНУТИ КАМЕРУ</button>
+    
+    <div class="info">
+        📱 Працює на телефонах<br>
+        💡 Дозвольте доступ до камери коли запитає браузер<br>
+        🔄 Після дозволу покажіть обличчя
+    </div>
+</div>
+
+<script>
+    const video = document.getElementById('video');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const ageSpan = document.getElementById('ageValue');
+    const statusDiv = document.getElementById('status');
+    const placeholder = document.getElementById('placeholder');
+    const resultPanel = document.getElementById('resultPanel');
+    
+    let stream = null;
+    let modelsReady = false;
+    let detectionInterval = null;
+
+    async function loadModels() {
+        statusDiv.innerHTML = '📥 Завантаження ШІ моделей (5-10 секунд)...';
+        try {
+            await faceapi.nets.tinyFaceDetector.loadFromUri('https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights');
+            await faceapi.nets.ageGenderNet.loadFromUri('https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights');
+            modelsReady = true;
+            statusDiv.innerHTML = '✅ Моделі завантажено! Натисніть "Увімкнути камеру"';
+        } catch(e) {
+            statusDiv.innerHTML = '❌ Помилка завантаження. Перезавантажте сторінку';
+            console.error(e);
+        }
+    }
+
+    async function startCamera() {
+        if (!modelsReady) {
+            statusDiv.innerHTML = '⏳ Зачекайте, моделі ще завантажуються...';
+            return;
+        }
+        
+        try {
+            statusDiv.innerHTML = '📷 Запит доступу до камери... Дозвольте у вікні';
+            
+            const constraints = {
+                video: {
+                    facingMode: "user",
+                    width: { ideal: 640 },
+                    height: { ideal: 480 }
+                }
+            };
+            
+            stream = await navigator.mediaDevices.getUserMedia(constraints);
+            video.srcObject = stream;
+            video.style.display = 'block';
+            placeholder.style.display = 'none';
+            resultPanel.style.display = 'block';
+            
+            await video.play();
+            
+            startBtn.disabled = true;
+            stopBtn.disabled = false;
+            statusDiv.innerHTML = '🎥 Камера працює! Шукаємо обличчя...';
+            
+            // Запускаємо розпізнавання
+            detectLoop();
+            
+        } catch(error) {
+            console.error(error);
+            statusDiv.innerHTML = '❌ Помилка: ' + (error.message || 'Немає доступу до камери');
+            if(error.name === 'NotAllowedError') {
+                statusDiv.innerHTML = '❌ Ви заблокували камеру. Дозвольте доступ у налаштуваннях браузера';
+            }
+        }
+    }
+
+    function stopCamera() {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            stream = null;
+        }
+        video.srcObject = null;
+        video.style.display = 'none';
+        placeholder.style.display = 'flex';
+        resultPanel.style.display = 'none';
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        ageSpan.innerText = '--';
+        statusDiv.innerHTML = '⏹️ Камеру вимкнено';
+        if (detectionInterval) {
+            cancelAnimationFrame(detectionInterval);
+            detectionInterval = null;
+        }
+    }
+
+    async function detectLoop() {
+        if (!stream || !modelsReady) return;
+        
+        try {
+            const detections = await faceapi.detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+                .withAgeAndGender();
+            
+            if (detections && detections.length > 0) {
+                const age = Math.round(detections[0].age);
+                const gender = detections[0].gender === 'male' ? 'чоловік' : 'жінка';
+                ageSpan.innerText = age;
+                statusDiv.innerHTML = `👤 ${gender}, вік ~${age} років`;
+            } else {
+                ageSpan.innerText = '--';
+                statusDiv.innerHTML = '😕 Обличчя не знайдено. Подивіться в камеру';
+            }
+        } catch(e) {
+            console.warn(e);
+        }
+        
+        detectionInterval = requestAnimationFrame(detectLoop);
+    }
+
+    startBtn.addEventListener('click', startCamera);
+    stopBtn.addEventListener('click', stopCamera);
+    
+    // Запускаємо завантаження моделей
+    loadModels();
+    
+    // Очищення при закритті
+    window.addEventListener('beforeunload', () => {
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+        }
+    });
+</script>
+</body>
+</html>
